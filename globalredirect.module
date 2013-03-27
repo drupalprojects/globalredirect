@@ -289,7 +289,7 @@ function _globalredirect_is_active($settings) {
    * @see http://drupal.org/node/205810
    * @see http://drupal.org/node/278615
    */
-  if ($_SERVER['SCRIPT_NAME'] != $GLOBALS['base_path'] .'index.php') {
+  if (realpath($_SERVER['SCRIPT_FILENAME']) != realpath(getcwd() .'/index.php')) {
     return FALSE;
   }
 
