@@ -16,6 +16,7 @@ use Drupal\Core\Routing\MatchingRouteNotFoundException;
 use Drupal\Core\Url;
 use Drupal\globalredirect\RedirectChecker;
 use Symfony\Component\HttpFoundation\Request;
+use Symfony\Component\HttpKernel\HttpKernelInterface;
 use Symfony\Component\HttpKernel\KernelEvents;
 use Symfony\Component\EventDispatcher\EventSubscriberInterface;
 use Symfony\Component\HttpFoundation\RedirectResponse;
@@ -102,7 +103,7 @@ class GlobalredirectSubscriber implements EventSubscriberInterface {
    *   The Event to process.
    */
   public function globalredirectCleanUrls(GetResponseEvent $event) {
-    if (!$this->config->get('nonclean_to_clean')) {
+    if (!$this->config->get('nonclean_to_clean') || $event->getRequestType() != HttpKernelInterface::MASTER_REQUEST) {
       return;
     }
 
@@ -120,10 +121,7 @@ class GlobalredirectSubscriber implements EventSubscriberInterface {
    * @param \Symfony\Component\HttpKernel\Event\GetResponseEvent $event
    */
   public function globalredirectDeslash(GetResponseEvent $event) {
-    // For the front page we get into a loop because $request->getPathInfo()
-    // will return the "/" no matter if the site has been accessed via slashed
-    // or deslashed url.
-    if (!$this->config->get('deslash') || drupal_is_front_page()) {
+    if (!$this->config->get('deslash') || $event->getRequestType() != HttpKernelInterface::MASTER_REQUEST) {
       return;
     }
 
@@ -132,9 +130,9 @@ class GlobalredirectSubscriber implements EventSubscriberInterface {
       $path_info = trim($path_info, '/');
       try {
         $path_info = $this->aliasManager->getPathByAlias($path_info);
-        $this->setResponse($event, $path_info);
-      }
-      catch (MatchingRouteNotFoundException $e) {
+        // Need to add the slash back.
+        $this->setResponse($event, Url::fromUri('internal:/' . $path_info));
+      } catch (MatchingRouteNotFoundException $e) {
         // Do nothing here as it is not our responsibility to handle this.
       }
     }
@@ -146,16 +144,17 @@ class GlobalredirectSubscriber implements EventSubscriberInterface {
    * @param \Symfony\Component\HttpKernel\Event\GetResponseEvent $event
    */
   public function globalredirectFrontPage(GetResponseEvent $event) {
-    if (!$this->config->get('frontpage_redirect') || !drupal_is_front_page()) {
+    if (!$this->config->get('frontpage_redirect') || $event->getRequestType() != HttpKernelInterface::MASTER_REQUEST) {
       return;
     }
 
     $request = $event->getRequest();
     $path = trim($request->getPathInfo(), '/');
 
-    // Redirect only if the current path is not the root.
-    if (!empty($path)) {
-      $this->setResponse($event, '<front>');
+    // Redirect only if the current path is not the root and this is the front
+    // page.
+    if ($this->isFrontPage($path)) {
+      $this->setResponse($event, Url::fromRoute('<front>'));
     }
   }
 
@@ -165,17 +164,22 @@ class GlobalredirectSubscriber implements EventSubscriberInterface {
    * @param \Symfony\Component\HttpKernel\Event\GetResponseEvent $event
    */
   public function globalredirectNormalizeAliases(GetResponseEvent $event) {
-    if (!$this->config->get('normalize_aliases') || !$path = trim($event->getRequest()->getPathInfo(), '/')) {
+    if ($event->getRequestType() != HttpKernelInterface::MASTER_REQUEST || !$this->config->get('normalize_aliases') || !$path = trim($event->getRequest()
+        ->getPathInfo(), '/')
+    ) {
       return;
     }
 
     $system_path = $this->aliasManager->getPathByAlias($path);
-    $alias = $this->aliasManager->getAliasByPath($system_path, $this->languageManager->getCurrentLanguage()->id);
+    $alias = $this->aliasManager->getAliasByPath($system_path, $this->languageManager->getCurrentLanguage()
+      ->getId());
     // If the alias defined in the system is not the same as the one via which
     // the page has been accessed do a redirect to the one defined in the
     // system.
     if ($alias != $path) {
-      $this->setResponse($event, $system_path);
+      if ($url = \Drupal::pathValidator()->getUrlIfValid($alias)) {
+        $this->setResponse($event, $url);
+      }
     }
   }
 
@@ -186,14 +190,14 @@ class GlobalredirectSubscriber implements EventSubscriberInterface {
    */
   public function globalredirectForum(GetResponseEvent $event) {
     $request = $event->getRequest();
-    if (!$this->config->get('term_path_handler') || !$this->moduleHandler->moduleExists('forum') || !preg_match('/taxonomy\/term\/([0-9]+)$/', $request->getUri(), $matches)) {
+    if ($event->getRequestType() != HttpKernelInterface::MASTER_REQUEST || !$this->config->get('term_path_handler') || !$this->moduleHandler->moduleExists('forum') || !preg_match('/taxonomy\/term\/([0-9]+)$/', $request->getUri(), $matches)) {
       return;
     }
 
-    $term = $this->entityManager->getStorage('taxonomy_term')->load($matches[1]);
+    $term = $this->entityManager->getStorage('taxonomy_term')
+      ->load($matches[1]);
     if (!empty($term) && $term->url() != $request->getPathInfo()) {
-      $system_path = $this->aliasManager->getPathByAlias(ltrim($term->url(), '/'));
-      $this->setResponse($event, $system_path);
+      $this->setResponse($event, Url::fromUri('entity:taxonomy_term/' . $term->id()));
     }
   }
 
@@ -202,26 +206,28 @@ class GlobalredirectSubscriber implements EventSubscriberInterface {
    *
    * @param \Symfony\Component\HttpKernel\Event\GetResponseEvent $event
    *   The event object.
-   * @param string $path
-   *   The path where we want to redirect.
+   * @param \Drupal\Core\Url $url
+   *   The Url where we want to redirect.
    */
-  protected function setResponse(GetResponseEvent $event, $path) {
-    if (empty($path) || $path == '/') {
-      $path = '<front>';
-    }
-
+  protected function setResponse(GetResponseEvent $event, Url $url) {
     $request = $event->getRequest();
     $this->context->fromRequest($request);
 
-    $url = Url::createFromPath($path);
     parse_str($request->getQueryString(), $query);
     $url->setOption('query', $query);
     $url->setAbsolute(TRUE);
 
-    if ($this->redirectChecker->canRedirect($url->getRouteName(), $request)) {
-      $event->setResponse(new RedirectResponse($url->toString(), 301));
+    // We can only check access for routed URLs.
+    if (!$url->isRouted() || $this->redirectChecker->canRedirect($url->getRouteName(), $request)) {
+      // Add the 'rendered' cache tag, so that we can invalidate all responses
+      // when settings are changed.
+      $headers = [
+        'X-Drupal-Cache-Tags' => 'rendered',
+      ];
+      $event->setResponse(new RedirectResponse($url->toString(), 301, $headers));
     }
   }
+
 
   /**
    * {@inheritdoc}
@@ -233,8 +239,33 @@ class GlobalredirectSubscriber implements EventSubscriberInterface {
     $events[KernelEvents::REQUEST][] = array('globalredirectCleanUrls', 33);
     $events[KernelEvents::REQUEST][] = array('globalredirectDeslash', 34);
     $events[KernelEvents::REQUEST][] = array('globalredirectFrontPage', 35);
-    $events[KernelEvents::REQUEST][] = array('globalredirectNormalizeAliases', 36);
+    $events[KernelEvents::REQUEST][] = array(
+      'globalredirectNormalizeAliases',
+      36
+    );
     $events[KernelEvents::REQUEST][] = array('globalredirectForum', 37);
     return $events;
   }
+
+  /**
+   * Determine if the given path is the site's front page.
+   *
+   * @param string $path
+   *   The path to check.
+   *
+   * @return bool
+   *   Returns TRUE if the path is the site's front page.
+   */
+  protected function isFrontPage($path) {
+    // @todo PathMatcher::isFrontPage() doesn't work here for some reason.
+    $front = \Drupal::config('system.site')->get('page.front');
+
+    // This might be an alias.
+    $alias_path = \Drupal::service('path.alias_manager')->getPathByAlias($path);
+
+    return !empty($path)
+    // Path matches front or alias to front.
+    && (($path == $front) || ($alias_path == $front));
+  }
+
 }

@@ -6,14 +6,14 @@
 
 namespace Drupal\globalredirect\Tests;
 
-use Drupal\Component\Utility\String;
-use Drupal\Component\Utility\UrlHelper;
+use Drupal\Component\Utility\SafeMarkup;
 use Drupal\Core\Language\Language;
-use Drupal\Core\Routing\UrlGenerator;
 use Drupal\simpletest\WebTestBase;
 
 /**
  * Global redirect test cases.
+ *
+ * @group globalredirect
  */
 class GlobalRedirectTest extends WebTestBase {
 
@@ -39,20 +39,20 @@ class GlobalRedirectTest extends WebTestBase {
    */
   protected $config;
 
+  /**
+   * @var \Drupal\Core\Entity\ContentEntityInterface
+   */
   protected $forumTerm;
-  protected $term;
-  protected $node;
 
   /**
-   * {@inheritdoc}
+   * @var \Drupal\Core\Entity\ContentEntityInterface
    */
-  public static function getInfo() {
-    return array(
-      'name' => 'Global Redirect',
-      'description' => 'Ensure that Global Redirect functions correctly',
-      'group' => 'Global Redirect',
-    );
-  }
+  protected $term;
+
+  /**
+   * @var \Drupal\Core\Entity\ContentEntityInterface
+   */
+  protected $node;
 
   /**
    * {@inheritdoc}
@@ -60,7 +60,7 @@ class GlobalRedirectTest extends WebTestBase {
   function setUp() {
     parent::setUp();
 
-    $this->config = \Drupal::config('globalredirect.settings');
+    $this->config = $this->config('globalredirect.settings');
 
     $this->drupalCreateContentType(array('type' => 'page', 'name' => 'Page'));
     $this->drupalCreateContentType(array('type' => 'article', 'name' => 'Article'));
@@ -141,11 +141,15 @@ class GlobalRedirectTest extends WebTestBase {
     // Test front page redirects.
 
     $this->config->set('frontpage_redirect', TRUE)->save();
-    \Drupal::config('system.site')->set('page.front', 'node')->save();
+    $this->config('system.site')->set('page.front', 'node')->save();
     $this->assertRedirect('node', '<front>');
+    // Test front page redirects with an alias.
+    \Drupal::service('path.alias_storage')->save('node', 'node-alias');
+    $this->assertRedirect('node-alias', '<front>');
 
     $this->config->set('frontpage_redirect', FALSE)->save();
     $this->assertRedirect('node', NULL, 'HTTP/1.1 200 OK');
+    $this->assertRedirect('node-alias', NULL, 'HTTP/1.1 200 OK');
 
     // Test the access checking.
 
@@ -186,7 +190,12 @@ class GlobalRedirectTest extends WebTestBase {
     $headers = $this->drupalGetHeaders(TRUE);
 
     $ending_url = isset($headers[0]['location']) ? $headers[0]['location'] : NULL;
-    $message = String::format('Testing redirect from %from to %to. Ending url: %url', array('%from' => $path, '%to' => $expected_ending_url, '%url' => $ending_url));
+    $message = SafeMarkup::format('Testing redirect from %from to %to. Ending url: %url', array(
+      '%from' => $path,
+      '%to' => $expected_ending_url,
+      '%url' => $ending_url,
+    ));
+
 
     if ($expected_ending_url == '<front>') {
       $expected_ending_url = $GLOBALS['base_url'] . '/';
