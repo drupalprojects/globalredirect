@@ -412,12 +412,8 @@ function _globalredirect_get_settings($default_only = FALSE) {
  */
 function globalredirect_request_path() {
   if (request_uri()) {
-    // Do not use $_REQUEST as it combines $_GET, $_POST and even $_COOKIE wich
-    // can cause unwanted side effects. Depending on how you setup fastcgi this
-    // can result in $_REQUEST['q'] being the same as the output of
-    // request_uri() causing this to fail entirely.
-    if (isset($_GET['q'])) {
-      $path = $_GET['q'];
+    if (isset($_REQUEST['q'])) {
+      $path = $_REQUEST['q'];
     }
     else {
       // This is a request using a clean URL. Extract the path from REQUEST_URI.
