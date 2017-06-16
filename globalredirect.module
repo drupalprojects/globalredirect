@@ -339,7 +339,7 @@ function _globalredirect_is_active($settings) {
    * If the site is in offline mode there is little point doing any of this as
    * you might end up redirecting to a 503.
    */
-  if (variable_get('site_offline', 0) == 1) {
+  if (variable_get('maintenance_mode', 0) == 1) {
     return FALSE;
   }
 
