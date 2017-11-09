@@ -22,6 +22,8 @@ function globalredirect_help($path, $arg) {
 function globalredirect_init() {
   global $language;
 
+  require_once(DRUPAL_ROOT . '/includes/locale.inc');
+
   /**
    * Get the settings.
    */
