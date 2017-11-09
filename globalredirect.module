@@ -67,6 +67,7 @@ function globalredirect_init() {
     'alias' => FALSE,
     'prefix' => '',
     'external' => FALSE,
+    'globalredirect' => TRUE, // inform other modules that hook_url_outbound_alter invoked by globalredirect
   );
 
   // Get the request path. We cannot use request_path() as it uses a completely trimmed path.
