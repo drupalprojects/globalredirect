@@ -313,11 +313,23 @@ function globalredirect_menu() {
     'description' => 'Chose which features you would like enabled for Global Redirect',
     'page callback' => 'drupal_get_form',
     'page arguments' => array('globalredirect_settings'),
-    'access arguments' => array('administer site configuration'),
+    'access arguments' => array('administer global redirect'),
     'file' => 'globalredirect.admin.inc',
   );
 
   return $items;
+}
+
+/**
+ * Implements hook_permission().
+ */
+function globalredirect_permission() {
+  return array(
+    'administer global redirect' => array(
+      'title' => t('Administer Global Redirect'),
+      'description' => t('Allow access to configure Global Redirect module.'),
+    ),
+  );
 }
 
 /**
